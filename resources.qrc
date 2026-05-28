@@ -1,0 +1,20 @@
+<!-- Touch resources.qrc when replacing embedded image assets so RCC regenerates qrc_resources.cpp -->
+<RCC>
+    <qresource prefix="/">
+        <file>resources/AssetEditor.png</file>
+        <file>resources/BlackOps3.png</file>
+        <file>resources/Export2Bin.png</file>
+        <file>resources/Radiant.png</file>
+        <file>resources/ModLauncher.png</file>
+        <file>resources/Go.png</file>
+        <file>resources/FileNew.png</file>
+        <file>resources/upload.png</file>
+        <file>resources/checkmark_white.svg</file>
+        <file>resources/ancient-murial.png</file>
+        <file>resources/ancient-murial-wide.png</file>
+        <file>resources/forestbg.png</file>
+        <file>stylesheet/stylesheet/checkbox.png</file>
+        <file>stylesheet/stylesheet/down_arrow.png</file>
+        <file>stylesheet/stylesheet/handle.png</file>
+    </qresource>
+</RCC>
