@@ -5446,7 +5446,7 @@ void mlMainWindow::UpdateBuildActionButtons()
 		|| (mLightEnabledWidget && mLightEnabledWidget->isChecked())
 		|| (mLinkEnabledWidget && mLinkEnabledWidget->isChecked())
 		|| (mRunEnabledWidget && mRunEnabledWidget->isChecked());
-	const bool CanBuild = HasBuildTarget && HasEnabledAction;
+	const bool CanBuild = HasBuildTarget;
 	const bool CanRunSelectedOnly = RunOnlyMode && HasRunnableSelection;
 	const bool CanAnalyzeCheckedTarget = HasCheckedTargets;
 
@@ -7758,6 +7758,10 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 		&& mCompileEnabledWidget && !mCompileEnabledWidget->isChecked()
 		&& mLightEnabledWidget && !mLightEnabledWidget->isChecked()
 		&& mLinkEnabledWidget && !mLinkEnabledWidget->isChecked();
+	const bool ExplicitCompile = mCompileEnabledWidget && mCompileEnabledWidget->isChecked();
+	const bool ExplicitLight = mLightEnabledWidget && mLightEnabledWidget->isChecked();
+	const bool ExplicitLink = mLinkEnabledWidget && mLinkEnabledWidget->isChecked();
+	const bool ExplicitRun = mRunEnabledWidget && mRunEnabledWidget->isChecked();
 
 	if (mBuildThread)
 	{
@@ -7768,6 +7772,7 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 
 	QList<QPair<QString, QStringList>> Commands;
 	bool UpdateAdded = false;
+	bool HasTargetToBuild = false;
 	auto AddUpdateDBCommand = [&]()
 	{
 		if (!UpdateAdded)
@@ -7777,8 +7782,8 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 		}
 	};
 
-		QList<QTreeWidgetItem*> CheckedItems = CollectTargetItems();
-		if (CheckedItems.isEmpty())
+	QList<QTreeWidgetItem*> CheckedItems = CollectTargetItems();
+	if (CheckedItems.isEmpty())
 		{
 			QMessageBox::warning(this, "Build", "Please select at least one file from the list.");
 		return;
@@ -7806,8 +7811,10 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 		if (Item->data(0, Qt::UserRole).toInt() == ML_ITEM_MAP)
 		{
 			QString MapName = GetItemEntryName(Item);
+			HasTargetToBuild = true;
+			const bool DefaultBuildMode = !ExplicitCompile && !ExplicitLight && !ExplicitLink && !ExplicitRun;
 
-			if (mCompileEnabledWidget->isChecked())
+			if (ExplicitCompile || DefaultBuildMode)
 			{
 				AddUpdateDBCommand();
 
@@ -7825,7 +7832,7 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 				Commands.append(QPair<QString, QStringList>(QString("%1\\bin\\cod2map64.exe").arg(mToolsPath), Args));
 			}
 
-			if (mLightEnabledWidget->isChecked())
+			if (ExplicitLight)
 			{
 				AddUpdateDBCommand();
 
@@ -7850,7 +7857,7 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 				Commands.append(QPair<QString, QStringList>(QString("%1/bin/radiant_modtools.exe").arg(mToolsPath), Args));
 			}
 
-			if (mLinkEnabledWidget->isChecked())
+			if (ExplicitLink || DefaultBuildMode)
 			{
 				AddUpdateDBCommand();
 
@@ -7863,8 +7870,10 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 		{
 			QString ModName = GetItemContainerName(Item);
 			const int ItemType = Item->data(0, Qt::UserRole).toInt();
+			HasTargetToBuild = true;
+			const bool DefaultBuildMode = !ExplicitCompile && !ExplicitLight && !ExplicitLink && !ExplicitRun;
 
-			if (mLinkEnabledWidget->isChecked())
+			if (ExplicitLink || DefaultBuildMode)
 			{
 				AddUpdateDBCommand();
 
@@ -7884,13 +7893,13 @@ void mlMainWindow::StartBuild(BuildLanguageMode Mode)
 		}
 	}
 
-	if (mRunEnabledWidget->isChecked() && (!LastMod.isEmpty() || !LastMap.isEmpty()))
+	if (ExplicitRun && (!LastMod.isEmpty() || !LastMap.isEmpty()))
 	{
 		QueueGameStatsForItem(LastMap.isEmpty() ? QString("mod:%1").arg(LastMod.toLower()) : QString("map:%1").arg(LastMap.toLower()));
 		Commands.append(CreateGameLaunchCommand(LastMod.isEmpty() ? LastMap : LastMod, LastMap));
 	}
 
-	if (Commands.size() == 0 && !UpdateAdded)
+	if (Commands.size() == 0 && !UpdateAdded && !HasTargetToBuild)
 	{
 		QMessageBox::information(this, "No Tasks", "Please selected at least one file from the list and one action to be performed.");
 		return;
