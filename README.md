@@ -1,6 +1,6 @@
 # BO3 Mod Tools Black
 
-BO3 Mod Tools Black is a reworked Black Ops III Mod Tools launcher focused on faster iteration, cleaner project management, and modernized workflow.
+BO3 Mod Tools Black is a reworked Black Ops III Mod Tools launcher focused on cleaner project management, and a more modernized workflow. The new launcher focuses on adding better flows for uploading, editing, compiling, linking and adds tons of new features!
 
 Changes were made primarily with the help of AI.
 
