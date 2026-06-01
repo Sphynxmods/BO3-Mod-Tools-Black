@@ -105,6 +105,15 @@ Changes were made primarily with the help of AI.
 
 Suggestions and requests can be submitted on Discord or GitHub: @Sphynxmods
 
+## Credits
+
+Thank you for everyone who has tested BO3 Mod Tools Launcher Black:
+- GentlemanCheeseMan
+- Cinna
+- Death_Storm4
+- Aimless
+- Manny829
+
 ## License
 
 Licensed under Apache 2.0. See LICENSE.
