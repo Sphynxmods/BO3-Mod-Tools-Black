@@ -1,6 +1,6 @@
 # BO3 Mod Tools Black
 
-BO3 Mod Tools Black is a reworked Black Ops III Mod Tools launcher focused on faster iteration, cleaner project management, and modernized workflow.
+BO3 Mod Tools Black is a reworked Black Ops III Mod Tools launcher focused on cleaner project management, and a more modernized workflow. The new launcher focuses on adding better flows for uploading, editing, compiling, linking and adds tons of new features!
 
 Changes were made primarily with the help of AI.
 
@@ -15,6 +15,8 @@ Changes were made primarily with the help of AI.
 - Colorized display names so projects can be color-coded in the launcher.
 - Map/Mod tags in Recents and Favorites.
 - Recategorized Maps/Mods list tabs: Recent, Favorites, ZM Maps, MP Maps, Mods, All.
+- Added Customizable Tabs
+- Added Custom Tabs for custom organization
 - All tab moved to the left.
 - Total Maps/Mods counter in the top-right.
 - Added estimated size of mod/map entries in the list.
@@ -104,6 +106,15 @@ Changes were made primarily with the help of AI.
 ## Suggestions and Requests
 
 Suggestions and requests can be submitted on Discord or GitHub: @Sphynxmods
+
+## Credits
+
+Thank you for everyone who has tested BO3 Mod Tools Launcher Black:
+- GentlemanCheeseMan
+- Cinna
+- Death_Storm4
+- Aimless
+- Manny829
 
 ## License
 

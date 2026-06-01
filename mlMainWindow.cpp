@@ -1,4 +1,4 @@
-/*
+﻿/*
 *
 * Copyright 2016 Activision Publishing, Inc.
 *
@@ -43,7 +43,7 @@ dvar_s gDvars[] = {
 					{"splitscreen", "Enable splitscreen", DVAR_VALUE_BOOL},
 					{"splitscreen_playerCount", "Allocate the number of instances for splitscreen", DVAR_VALUE_INT, 0, 2}
 				 };
-static const char* kLauncherVersion = "1.0.3";
+static const char* kLauncherVersion = "1.0.4";
 // Point these at the repo that publishes the launcher ZIP asset users should install.
 static const char* kLauncherReleaseApiUrl = "https://api.github.com/repos/Sphynxmods/BO3-Mod-Tools-Black/releases/latest";
 static const char* kLauncherReleasesUrl = "https://github.com/Sphynxmods/BO3-Mod-Tools-Black/releases";
@@ -464,11 +464,18 @@ static QString NormalizeCategoryTabKey(const QString& RawKey)
 	return Key;
 }
 
+static bool IsAddCategoryTabKey(const QString& RawKey)
+{
+	return NormalizeCategoryTabKey(RawKey) == "__add-category-tab__";
+}
+
 static QString CurrentCategoryTabKey(const QTabBar* Tabs)
 {
 	if (!Tabs || Tabs->currentIndex() < 0)
 		return "all";
 	const QString DataKey = NormalizeCategoryTabKey(Tabs->tabData(Tabs->currentIndex()).toString());
+	if (IsAddCategoryTabKey(DataKey))
+		return "all";
 	if (!DataKey.isEmpty())
 		return DataKey;
 	return NormalizeCategoryTabKey(Tabs->tabText(Tabs->currentIndex()));
@@ -485,6 +492,101 @@ static int FindCategoryTabIndex(const QTabBar* Tabs, const QString& CategoryKey)
 			return TabIdx;
 	}
 	return -1;
+}
+
+// --- Custom tab persistence helpers ---
+
+static QList<QVariantMap> LoadCustomTabDefs()
+{
+	QSettings Settings;
+	const int Count = Settings.beginReadArray("CustomTabs");
+	QList<QVariantMap> Result;
+	for (int i = 0; i < Count; i++)
+	{
+		Settings.setArrayIndex(i);
+		QVariantMap Tab;
+		Tab["id"] = Settings.value("id").toString();
+		Tab["name"] = Settings.value("name").toString();
+		Tab["color"] = Settings.value("color").toString();
+		Tab["icon"] = Settings.value("icon").toString();
+		Tab["items"] = Settings.value("items", QStringList()).toStringList();
+		if (!Tab["id"].toString().isEmpty() && !Tab["name"].toString().isEmpty())
+			Result.append(Tab);
+	}
+	Settings.endArray();
+	return Result;
+}
+
+static void SaveCustomTabDefs(const QList<QVariantMap>& Tabs)
+{
+	QSettings Settings;
+	Settings.remove("CustomTabs");
+	Settings.beginWriteArray("CustomTabs");
+	for (int i = 0; i < Tabs.size(); i++)
+	{
+		Settings.setArrayIndex(i);
+		const QVariantMap& Tab = Tabs[i];
+		Settings.setValue("id", Tab.value("id").toString());
+		Settings.setValue("name", Tab.value("name").toString());
+		Settings.setValue("color", Tab.value("color").toString());
+		Settings.setValue("icon", Tab.value("icon").toString());
+		Settings.setValue("items", Tab.value("items").toStringList());
+	}
+	Settings.endArray();
+}
+
+static QString GenerateCustomTabId()
+{
+	return QString("custom-%1").arg(QDateTime::currentMSecsSinceEpoch());
+}
+
+static QString NormalizedTabIconPath(const QString& Value)
+{
+	QString Path = Value.trimmed();
+	if (Path.startsWith("qrc:/"))
+		Path = ":" + Path.mid(4);
+	return Path;
+}
+
+static QIcon BuildTabIcon(const QString& Value)
+{
+	const QString Path = NormalizedTabIconPath(Value);
+	if (Path.isEmpty())
+		return QIcon();
+
+	if (Path.startsWith(":"))
+	{
+		const QPixmap Pix(Path);
+		return Pix.isNull() ? QIcon() : QIcon(Pix);
+	}
+
+	const QFileInfo Info(Path);
+	if (!Info.isFile())
+		return QIcon();
+
+	const QPixmap Pix(Path);
+	return Pix.isNull() ? QIcon() : QIcon(Pix);
+}
+
+static QString BuildTabLabel(const QString& Icon, const QString& Name)
+{
+	if (!BuildTabIcon(Icon).isNull())
+		return Name;
+	const QString TrimmedIcon = Icon.trimmed();
+	if (TrimmedIcon.isEmpty())
+		return Name;
+	return TrimmedIcon + "  " + Name;
+}
+
+static QStringList GetCustomTabItems(const QString& TabKey)
+{
+	const QList<QVariantMap> Tabs = LoadCustomTabDefs();
+	for (const QVariantMap& Tab : Tabs)
+	{
+		if (Tab.value("id").toString() == TabKey)
+			return Tab.value("items").toStringList();
+	}
+	return {};
 }
 }
 
@@ -1344,6 +1446,47 @@ protected:
 
 private:
 	QWidget* mRevealWidget;
+};
+
+class CategoryTabBar : public QTabBar
+{
+public:
+	CategoryTabBar(QWidget* Parent = NULL)
+		: QTabBar(Parent)
+	{
+	}
+
+protected:
+	void paintEvent(QPaintEvent* Event) override
+	{
+		Q_UNUSED(Event);
+
+		QStylePainter Painter(this);
+		QStyleOptionTab Option;
+		for (int TabIdx = 0; TabIdx < count(); ++TabIdx)
+		{
+			initStyleOption(&Option, TabIdx);
+			const QColor TabColor = tabTextColor(TabIdx);
+			if (TabColor.isValid())
+			{
+				Option.palette.setColor(QPalette::WindowText, TabColor);
+				Option.palette.setColor(QPalette::ButtonText, TabColor);
+				Option.palette.setColor(QPalette::Text, TabColor);
+			}
+
+			Painter.drawControl(QStyle::CE_TabBarTabShape, Option);
+			Painter.drawControl(QStyle::CE_TabBarTabLabel, Option);
+
+			// Force the final visible label color to match setTabTextColor even when global stylesheets set a tab text color.
+			QRect TextRect = style()->subElementRect(QStyle::SE_TabBarTabText, &Option, this);
+			QString DrawText = fontMetrics().elidedText(Option.text, elideMode(), qMax(0, TextRect.width()));
+			Painter.save();
+			Painter.setFont(font());
+			Painter.setPen(TabColor.isValid() ? TabColor : palette().color(QPalette::ButtonText));
+			Painter.drawText(TextRect, Qt::AlignCenter | Qt::TextShowMnemonic, DrawText);
+			Painter.restore();
+		}
+	}
 };
 
 static void UpdateBackgroundPreviewLabel(QLabel* PreviewLabel, const QString& FileName)
@@ -3037,6 +3180,9 @@ mlMainWindow::mlMainWindow()
 	mActionThemeDarkModern = NULL;
 	mActionThemeClassic = NULL;
 	mCategoryTabs = NULL;
+	mCategoryTabPencilButton = NULL;
+	mAddCategoryTabButton = NULL;
+	mCategoryTabHoveredIndex = -1;
 	mCategorySummaryLabel = NULL;
 	mOutputTabs = NULL;
 	mCentralWidgetSplitter = NULL;
@@ -3159,12 +3305,24 @@ mlMainWindow::mlMainWindow()
 	QHBoxLayout* CategoryHeaderLayout = new QHBoxLayout(CategoryHeader);
 	CategoryHeaderLayout->setContentsMargins(0, 0, 0, 0);
 	CategoryHeaderLayout->setSpacing(8);
-	mCategoryTabs = new QTabBar(CategoryHeader);
+	mCategoryTabs = new CategoryTabBar(CategoryHeader);
 	mCategoryTabs->setObjectName("CategoryTabs");
-	auto AddCategoryTab = [&](const QString& Label, const QString& Key)
+	mCategoryTabs->setMouseTracking(true);
+	auto AddCategoryTab = [&](const QString& DefaultLabel, const QString& Key)
 	{
-		const int Index = mCategoryTabs->addTab(Label);
+		const QString OverrideName = Settings.value(QString("TabOverrides/%1/Name").arg(Key)).toString();
+		const QString OverrideColor = Settings.value(QString("TabOverrides/%1/Color").arg(Key)).toString();
+		const QString OverrideIcon = Settings.value(QString("TabOverrides/%1/Icon").arg(Key)).toString();
+		const QString ActualLabel = BuildTabLabel(OverrideIcon, OverrideName.isEmpty() ? DefaultLabel : OverrideName);
+		const int Index = mCategoryTabs->addTab(ActualLabel);
+		mCategoryTabs->setTabIcon(Index, BuildTabIcon(OverrideIcon));
 		mCategoryTabs->setTabData(Index, Key);
+		if (!OverrideColor.isEmpty())
+		{
+			const QColor Col(OverrideColor);
+			if (Col.isValid())
+				mCategoryTabs->setTabTextColor(Index, Col);
+		}
 	};
 	AddCategoryTab("All", "all");
 	AddCategoryTab("Recent", "recent");
@@ -3172,20 +3330,46 @@ mlMainWindow::mlMainWindow()
 	AddCategoryTab("ZM Maps", "zm-maps");
 	AddCategoryTab("MP Maps", "mp-maps");
 	AddCategoryTab("Mods", "mods");
+	// Load saved custom tabs
+	{
+		const QList<QVariantMap> CustomTabDefs = LoadCustomTabDefs();
+		for (const QVariantMap& Tab : CustomTabDefs)
+		{
+			const QString TabId = Tab.value("id").toString();
+			const QString TabName = Tab.value("name").toString();
+			const QString TabIconValue = Tab.value("icon").toString();
+			const int Index = mCategoryTabs->addTab(BuildTabLabel(TabIconValue, TabName));
+			mCategoryTabs->setTabIcon(Index, BuildTabIcon(TabIconValue));
+			mCategoryTabs->setTabData(Index, TabId);
+			if (!Tab.value("color").toString().isEmpty())
+			{
+				const QColor Col(Tab.value("color").toString());
+				if (Col.isValid())
+					mCategoryTabs->setTabTextColor(Index, Col);
+			}
+		}
+	}
+	const int AddTabIndex = mCategoryTabs->addTab("+");
+	mCategoryTabs->setTabData(AddTabIndex, "__add-category-tab__");
+	mCategoryTabs->setTabToolTip(AddTabIndex, "Add custom tab");
 	mCategoryTabs->setDocumentMode(true);
 	mCategoryTabs->setExpanding(false);
 	mCategoryTabs->setDrawBase(false);
 	mCategoryTabs->setUsesScrollButtons(false);
 	mCategoryTabs->setElideMode(Qt::ElideNone);
 	mCategoryTabs->setMovable(true);
+	mCategoryTabs->setContextMenuPolicy(Qt::CustomContextMenu);
 	const QString SavedCategoryTabKey = NormalizeCategoryTabKey(Settings.value("ActiveCategoryTabKey", "").toString());
 	int SavedCategoryTab = FindCategoryTabIndex(mCategoryTabs, SavedCategoryTabKey);
 	if (SavedCategoryTab < 0)
 	{
 		const int SavedCategoryTabIndex = Settings.value("ActiveCategoryTab", CategoryAll).toInt();
-		SavedCategoryTab = qBound(0, SavedCategoryTabIndex, mCategoryTabs->count() - 1);
+		SavedCategoryTab = qBound(0, SavedCategoryTabIndex, qMax(0, mCategoryTabs->count() - 2));
 	}
+	if (IsAddCategoryTabKey(mCategoryTabs->tabData(SavedCategoryTab).toString()))
+		SavedCategoryTab = 0;
 	mCategoryTabs->setCurrentIndex(SavedCategoryTab);
+	mCategoryTabPencilButton = NULL;
 	CategoryHeaderLayout->addWidget(mCategoryTabs, 0);
 	CategoryHeaderLayout->addStretch(1);
 	mCategorySummaryLabel = new QLabel(CategoryHeader);
@@ -3223,9 +3407,103 @@ mlMainWindow::mlMainWindow()
 
 	connect(mCategoryTabs, &QTabBar::currentChanged, this, [=](int Index)
 	{
+		if (Index < 0 || Index >= mCategoryTabs->count())
+			return;
+		if (IsAddCategoryTabKey(mCategoryTabs->tabData(Index).toString()))
+		{
+			const int LastRealTab = FindCategoryTabIndex(mCategoryTabs, QSettings().value("ActiveCategoryTabKey", "all").toString());
+			const int RestoreIndex = (LastRealTab >= 0 && !IsAddCategoryTabKey(mCategoryTabs->tabData(LastRealTab).toString())) ? LastRealTab : 0;
+			{
+				QSignalBlocker Blocker(mCategoryTabs);
+				mCategoryTabs->setCurrentIndex(RestoreIndex);
+			}
+			ShowCategoryTabEditDialog(-1);
+			return;
+		}
 		QSettings().setValue("ActiveCategoryTab", Index);
 		QSettings().setValue("ActiveCategoryTabKey", CurrentCategoryTabKey(mCategoryTabs));
 		PopulateFileList();
+	});
+
+	connect(mCategoryTabs, &QTabBar::tabBarDoubleClicked, this, [=](int Index)
+	{
+		if (Index >= 0 && Index < mCategoryTabs->count() && !IsAddCategoryTabKey(mCategoryTabs->tabData(Index).toString()))
+			ShowCategoryTabEditDialog(Index);
+	});
+
+	connect(mCategoryTabs, &QTabBar::customContextMenuRequested, this, [=](const QPoint& Position)
+	{
+		const int TabIndex = mCategoryTabs->tabAt(Position);
+		if (TabIndex < 0 || TabIndex >= mCategoryTabs->count())
+			return;
+
+		const QString TabKey = mCategoryTabs->tabData(TabIndex).toString();
+		if (IsAddCategoryTabKey(TabKey))
+			return;
+
+		QMenu Menu(mCategoryTabs);
+		QAction* EditAction = Menu.addAction("Edit");
+		const bool CustomTab = TabKey.startsWith("custom-");
+
+		QWidgetAction* DeleteAction = new QWidgetAction(&Menu);
+		QToolButton* DeleteButton = new QToolButton(&Menu);
+		DeleteButton->setText("Delete");
+		DeleteButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+		DeleteButton->setAutoRaise(true);
+		DeleteButton->setCursor(Qt::PointingHandCursor);
+		DeleteButton->setEnabled(CustomTab);
+		DeleteButton->setStyleSheet(
+			"QToolButton { color:#d84a4a; font-weight:700; padding:4px 12px; text-align:left; }"
+			"QToolButton:hover { background: rgba(216,74,74,0.16); }"
+			"QToolButton:disabled { color:#7a7a7a; }");
+		DeleteAction->setDefaultWidget(DeleteButton);
+		Menu.addAction(DeleteAction);
+
+		bool DeleteRequested = false;
+		connect(DeleteButton, &QToolButton::clicked, &Menu, [&]()
+		{
+			DeleteRequested = true;
+			Menu.close();
+		});
+
+		QAction* PickedAction = Menu.exec(mCategoryTabs->mapToGlobal(Position));
+		if (!PickedAction && !DeleteRequested)
+			return;
+
+		if (PickedAction == EditAction)
+		{
+			ShowCategoryTabEditDialog(TabIndex);
+			return;
+		}
+
+		if (DeleteRequested && CustomTab)
+		{
+			QString TabName = mCategoryTabs->tabText(TabIndex);
+			if (TabName.contains("  "))
+				TabName = TabName.mid(TabName.indexOf("  ") + 2).trimmed();
+
+			const QMessageBox::StandardButton Reply = QMessageBox::question(
+				this,
+				"Delete Tab",
+				QString("Delete the custom tab \"%1\"?\n\nThis does not delete any maps or mods.").arg(TabName),
+				QMessageBox::Yes | QMessageBox::Cancel,
+				QMessageBox::Cancel);
+
+			if (Reply != QMessageBox::Yes)
+				return;
+
+			QList<QVariantMap> Defs = LoadCustomTabDefs();
+			for (int i = 0; i < Defs.size(); ++i)
+			{
+				if (Defs[i].value("id").toString() == TabKey)
+				{
+					Defs.removeAt(i);
+					break;
+				}
+			}
+			SaveCustomTabDefs(Defs);
+			RebuildCategoryTabs();
+		}
 	});
 
 	connect(mFileListWidget, &QTreeWidget::customContextMenuRequested, this, [=](const QPoint& Position)
@@ -4335,6 +4613,46 @@ bool mlMainWindow::eventFilter(QObject* Watched, QEvent* Event)
 		break;
 	default:
 		break;
+	}
+
+	// Pencil hover overlay on category tab bar
+	if (mCategoryTabs && mCategoryTabPencilButton)
+	{
+		if (Watched == mCategoryTabs)
+		{
+			if (Event->type() == QEvent::MouseMove)
+			{
+				const QMouseEvent* Me = static_cast<QMouseEvent*>(Event);
+				const int TabIdx = mCategoryTabs->tabAt(Me->pos());
+				mCategoryTabHoveredIndex = TabIdx;
+				if (TabIdx >= 0 && !IsAddCategoryTabKey(mCategoryTabs->tabData(TabIdx).toString()))
+				{
+					const QRect TR = mCategoryTabs->tabRect(TabIdx);
+					const int BtnW = 16;
+					const int BtnH = 16;
+					mCategoryTabPencilButton->setGeometry(TR.right() - BtnW - 1, TR.top() + (TR.height() - BtnH) / 2, BtnW, BtnH);
+					mCategoryTabPencilButton->raise();
+					mCategoryTabPencilButton->show();
+				}
+				else
+				{
+					mCategoryTabPencilButton->hide();
+				}
+			}
+			else if (Event->type() == QEvent::Leave)
+			{
+				if (!mCategoryTabPencilButton->underMouse())
+				{
+					mCategoryTabPencilButton->hide();
+					mCategoryTabHoveredIndex = -1;
+				}
+			}
+		}
+		else if (Watched == mCategoryTabPencilButton && Event->type() == QEvent::Leave)
+		{
+			mCategoryTabPencilButton->hide();
+			mCategoryTabHoveredIndex = -1;
+		}
 	}
 
 	if ((Watched == mOutputWidget || Watched == (mOutputWidget ? mOutputWidget->viewport() : NULL)) && Event->type() == QEvent::KeyPress)
@@ -5566,6 +5884,342 @@ QString mlMainWindow::GetItemEntryName(QTreeWidgetItem* Item) const
 QString mlMainWindow::GetItemFavoriteKey(QTreeWidgetItem* Item) const
 {
 	return Item ? Item->data(0, ML_ITEM_FAVORITE_ROLE).toString() : QString();
+}
+
+bool mlMainWindow::IsCustomTab(int TabIndex) const
+{
+	if (!mCategoryTabs || TabIndex < 0 || TabIndex >= mCategoryTabs->count())
+		return false;
+	return mCategoryTabs->tabData(TabIndex).toString().startsWith("custom-");
+}
+
+void mlMainWindow::RebuildCategoryTabs()
+{
+	if (!mCategoryTabs)
+		return;
+
+	const QString SavedKey = CurrentCategoryTabKey(mCategoryTabs);
+
+	// Block signals so currentChanged doesn't fire during rebuild
+	mCategoryTabs->blockSignals(true);
+	while (mCategoryTabs->count() > 0)
+		mCategoryTabs->removeTab(0);
+
+	QSettings Settings;
+	auto AddTab = [&](const QString& DefaultLabel, const QString& Key)
+	{
+		const QString OverrideName = Settings.value(QString("TabOverrides/%1/Name").arg(Key)).toString();
+		const QString OverrideColor = Settings.value(QString("TabOverrides/%1/Color").arg(Key)).toString();
+		const QString OverrideIcon = Settings.value(QString("TabOverrides/%1/Icon").arg(Key)).toString();
+		const QString ActualLabel = BuildTabLabel(OverrideIcon, OverrideName.isEmpty() ? DefaultLabel : OverrideName);
+		const int Idx = mCategoryTabs->addTab(ActualLabel);
+		mCategoryTabs->setTabIcon(Idx, BuildTabIcon(OverrideIcon));
+		mCategoryTabs->setTabData(Idx, Key);
+		if (!OverrideColor.isEmpty())
+		{
+			const QColor Col(OverrideColor);
+			if (Col.isValid())
+				mCategoryTabs->setTabTextColor(Idx, Col);
+		}
+	};
+	AddTab("All", "all");
+	AddTab("Recent", "recent");
+	AddTab("Favorites", "favorites");
+	AddTab("ZM Maps", "zm-maps");
+	AddTab("MP Maps", "mp-maps");
+	AddTab("Mods", "mods");
+
+	const QList<QVariantMap> CustomTabDefs = LoadCustomTabDefs();
+	for (const QVariantMap& Tab : CustomTabDefs)
+	{
+		const QString TabId = Tab.value("id").toString();
+		const QString TabName = Tab.value("name").toString();
+		const QString TabIconValue = Tab.value("icon").toString();
+		const int Idx = mCategoryTabs->addTab(BuildTabLabel(TabIconValue, TabName));
+		mCategoryTabs->setTabIcon(Idx, BuildTabIcon(TabIconValue));
+		mCategoryTabs->setTabData(Idx, TabId);
+		if (!Tab.value("color").toString().isEmpty())
+		{
+			const QColor Col(Tab.value("color").toString());
+			if (Col.isValid())
+				mCategoryTabs->setTabTextColor(Idx, Col);
+		}
+	}
+	const int AddTabIdx = mCategoryTabs->addTab("+");
+	mCategoryTabs->setTabData(AddTabIdx, "__add-category-tab__");
+	mCategoryTabs->setTabToolTip(AddTabIdx, "Add custom tab");
+
+	mCategoryTabs->blockSignals(false);
+
+	// Restore previously active tab
+	const int RestoredIdx = FindCategoryTabIndex(mCategoryTabs, SavedKey);
+	mCategoryTabs->setCurrentIndex((RestoredIdx >= 0 && !IsAddCategoryTabKey(mCategoryTabs->tabData(RestoredIdx).toString())) ? RestoredIdx : 0);
+	PopulateFileList();
+}
+
+void mlMainWindow::ShowCategoryTabEditDialog(int TabIndex)
+{
+	if (!mCategoryTabs)
+		return;
+
+	const bool IsNew = (TabIndex < 0) || (TabIndex >= 0 && IsAddCategoryTabKey(mCategoryTabs->tabData(TabIndex).toString()));
+	const bool IsCustom = IsNew || IsCustomTab(TabIndex);
+
+	// Resolve current values
+	QString CurrentId;
+	QString CurrentName;
+	QString CurrentIcon;
+	QString CurrentColor;
+	QStringList CurrentItems;
+
+	if (!IsNew)
+	{
+		CurrentId = mCategoryTabs->tabData(TabIndex).toString();
+		if (IsCustom)
+		{
+			// Extract from saved custom tab def
+			const QList<QVariantMap> Defs = LoadCustomTabDefs();
+			for (const QVariantMap& Tab : Defs)
+			{
+				if (Tab.value("id").toString() == CurrentId)
+				{
+					CurrentName = Tab.value("name").toString();
+					CurrentIcon = Tab.value("icon").toString();
+					CurrentColor = Tab.value("color").toString();
+					CurrentItems = Tab.value("items").toStringList();
+					break;
+				}
+			}
+		}
+		else
+		{
+			// Built-in tab: read name from settings override or current tab text
+			QSettings Settings;
+			CurrentName = Settings.value(QString("TabOverrides/%1/Name").arg(CurrentId)).toString();
+			CurrentIcon = Settings.value(QString("TabOverrides/%1/Icon").arg(CurrentId)).toString();
+			CurrentColor = Settings.value(QString("TabOverrides/%1/Color").arg(CurrentId)).toString();
+			if (CurrentName.isEmpty())
+			{
+				// Strip any icon prefix from the current tab label to get the base name
+				QString TabText = mCategoryTabs->tabText(TabIndex);
+				if (TabText.contains("  "))
+					TabText = TabText.mid(TabText.indexOf("  ") + 2);
+				CurrentName = TabText.trimmed();
+			}
+		}
+	}
+
+	// Build dialog
+	QDialog Dialog(this);
+	Dialog.setWindowTitle(IsNew ? "New Custom Tab" : (IsCustom ? "Edit Custom Tab" : "Edit Tab"));
+	Dialog.resize(700, IsCustom ? 560 : 380);
+	Dialog.setMinimumSize(620, IsCustom ? 500 : 340);
+
+	QVBoxLayout* Layout = new QVBoxLayout(&Dialog);
+	Layout->setSpacing(8);
+
+	// Name
+	Layout->addWidget(new QLabel("Tab Name:", &Dialog));
+	QLineEdit* NameEdit = new QLineEdit(CurrentName, &Dialog);
+	NameEdit->setPlaceholderText("e.g. My Maps");
+	Layout->addWidget(NameEdit);
+
+	// Icon
+	Layout->addWidget(new QLabel("Icon image:", &Dialog));
+	QWidget* IconRow = new QWidget(&Dialog);
+	QHBoxLayout* IconRowLayout = new QHBoxLayout(IconRow);
+	IconRowLayout->setContentsMargins(0, 0, 0, 0);
+	IconRowLayout->setSpacing(6);
+	BackgroundDropLineEdit* IconEdit = new BackgroundDropLineEdit(CurrentIcon, IconRow);
+	IconEdit->setPlaceholderText("Drop an icon file here or browse...");
+	QLabel* IconPreview = new QLabel("None", IconRow);
+	IconPreview->setObjectName("BackgroundPreview");
+	IconPreview->setFixedSize(28, 28);
+	IconPreview->setAlignment(Qt::AlignCenter);
+	IconPreview->setToolTip("Current tab icon preview");
+	QPushButton* IconBrowseBtn = new QPushButton("Browse...", IconRow);
+	QPushButton* IconClearBtn = new QPushButton("Clear", IconRow);
+	IconRowLayout->addWidget(IconEdit, 1);
+	IconRowLayout->addWidget(IconPreview);
+	IconRowLayout->addWidget(IconBrowseBtn);
+	IconRowLayout->addWidget(IconClearBtn);
+	Layout->addWidget(IconRow);
+	auto RefreshIconPreview = [=]()
+	{
+		UpdateBackgroundPreviewLabel(IconPreview, IconEdit->text());
+	};
+	connect(IconBrowseBtn, &QPushButton::clicked, &Dialog, [&, IconEdit]()
+	{
+		const QString FileName = QFileDialog::getOpenFileName(&Dialog, "Select Icon", QString(), "Images (*.png *.jpg *.jpeg *.bmp *.webp *.ico);;All Files (*)");
+		if (!FileName.isEmpty())
+			IconEdit->setText(QDir::toNativeSeparators(FileName));
+	});
+	connect(IconClearBtn, &QPushButton::clicked, &Dialog, [=]() { IconEdit->clear(); });
+	connect(IconEdit, &QLineEdit::textChanged, &Dialog, [=](const QString&) { RefreshIconPreview(); });
+	RefreshIconPreview();
+
+	// Color
+	Layout->addWidget(new QLabel("Tab name color:", &Dialog));
+	QWidget* ColorWidget = new QWidget(&Dialog);
+	QHBoxLayout* ColorRow = new QHBoxLayout(ColorWidget);
+	ColorRow->setContentsMargins(0, 0, 0, 0);
+	ColorRow->setSpacing(6);
+	QLineEdit* ColorEdit = new QLineEdit(CurrentColor, ColorWidget);
+	ColorEdit->setPlaceholderText("#ff8a2a");
+	QPushButton* ColorBrowseButton = new QPushButton(ColorWidget);
+	ColorBrowseButton->setFixedSize(26, 26);
+	ColorBrowseButton->setToolTip("Pick tab name color");
+	QPushButton* ColorClearBtn = new QPushButton("Clear", ColorWidget);
+	ColorRow->addWidget(ColorEdit, 1);
+	ColorRow->addWidget(ColorBrowseButton);
+	ColorRow->addWidget(ColorClearBtn);
+	Layout->addWidget(ColorWidget);
+	auto RefreshColorButton = [=]()
+	{
+		const QString NormalizedColor = NormalizedStoredColor(ColorEdit->text());
+		const QString SafeColor = NormalizedColor.isEmpty() ? QString("#444444") : NormalizedColor;
+		ColorBrowseButton->setStyleSheet(QString("background:%1; border:1px solid #6a6a6a; border-radius:6px;").arg(SafeColor));
+	};
+	connect(ColorBrowseButton, &QPushButton::clicked, &Dialog, [&, ColorEdit]()
+	{
+		QColor Color = QColorDialog::getColor(QColor(ColorEdit->text()), &Dialog, "Select Tab Name Color");
+		if (Color.isValid())
+			ColorEdit->setText(Color.name(QColor::HexRgb));
+	});
+	connect(ColorEdit, &QLineEdit::textChanged, &Dialog, [=](const QString&) { RefreshColorButton(); });
+	connect(ColorClearBtn, &QPushButton::clicked, &Dialog, [=]() { ColorEdit->clear(); });
+	RefreshColorButton();
+
+	// Items list (custom tabs only)
+	QListWidget* ItemsList = nullptr;
+	if (IsCustom)
+	{
+		Layout->addWidget(new QLabel("Maps and Mods in this tab:", &Dialog));
+		ItemsList = new QListWidget(&Dialog);
+		ItemsList->setSelectionMode(QAbstractItemView::NoSelection);
+		ItemsList->setMinimumHeight(140);
+
+		// Add all maps
+		const QString UserMapsFolder = QDir::cleanPath(QString("%1/usermaps/").arg(mGamePath));
+		const QStringList UserMaps = QDir(UserMapsFolder).entryList(QDir::AllDirs | QDir::NoDotAndDotDot);
+		for (const QString& MapName : UserMaps)
+		{
+			const QString ZoneFile = QString("%1/%2/zone_source/%3.zone").arg(UserMapsFolder, MapName, MapName);
+			if (!QFileInfo(ZoneFile).isFile())
+				continue;
+			const QString FavKey = QString("map:%1").arg(MapName.toLower());
+			QListWidgetItem* LItem = new QListWidgetItem(MapName, ItemsList);
+			LItem->setData(Qt::UserRole, FavKey);
+			LItem->setCheckState(CurrentItems.contains(FavKey, Qt::CaseInsensitive) ? Qt::Checked : Qt::Unchecked);
+		}
+
+		// Add all mods
+		const QString ModsFolder = QDir::cleanPath(QString("%1/mods/").arg(mGamePath));
+		const QStringList Mods = QDir(ModsFolder).entryList(QDir::AllDirs | QDir::NoDotAndDotDot);
+		const char* ZoneFiles[4] = { "core_mod", "mp_mod", "cp_mod", "zm_mod" };
+		for (const QString& ModName : Mods)
+		{
+			bool HasZone = false;
+			for (int f = 0; f < 4; f++)
+			{
+				if (QFileInfo(QString("%1/%2/zone_source/%3.zone").arg(ModsFolder, ModName, QString(ZoneFiles[f]))).isFile())
+				{
+					HasZone = true;
+					break;
+				}
+			}
+			if (!HasZone)
+				continue;
+			const QString FavKey = QString("mod:%1").arg(ModName.toLower());
+			QListWidgetItem* LItem = new QListWidgetItem(QString("Mod: %1").arg(ModName), ItemsList);
+			LItem->setData(Qt::UserRole, FavKey);
+			LItem->setCheckState(CurrentItems.contains(FavKey, Qt::CaseInsensitive) ? Qt::Checked : Qt::Unchecked);
+		}
+
+		if (ItemsList->count() == 0)
+		{
+			QListWidgetItem* Empty = new QListWidgetItem("(No maps or mods found)", ItemsList);
+			Empty->setFlags(Qt::NoItemFlags);
+		}
+
+		Layout->addWidget(ItemsList);
+	}
+
+	// Buttons
+	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
+	connect(Buttons, &QDialogButtonBox::accepted, &Dialog, &QDialog::accept);
+	connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
+	Layout->addWidget(Buttons);
+
+	const int Result = Dialog.exec();
+
+	if (Result != QDialog::Accepted)
+		return;
+
+	const QString NewName = NameEdit->text().trimmed();
+	if (NewName.isEmpty())
+		return;
+
+	const QString NewIcon = IconEdit->text().trimmed();
+	const QString PickedColor = NormalizedStoredColor(ColorEdit->text());
+
+	// Collect checked items for custom tabs
+	QStringList NewItems;
+	if (ItemsList)
+	{
+		for (int i = 0; i < ItemsList->count(); i++)
+		{
+			QListWidgetItem* LItem = ItemsList->item(i);
+			if (LItem && (LItem->flags() & Qt::ItemIsEnabled) && LItem->checkState() == Qt::Checked)
+				NewItems.append(LItem->data(Qt::UserRole).toString());
+		}
+	}
+
+	if (IsNew)
+	{
+		// Create new custom tab
+		QVariantMap NewTab;
+		NewTab["id"] = GenerateCustomTabId();
+		NewTab["name"] = NewName;
+		NewTab["icon"] = NewIcon;
+		NewTab["color"] = PickedColor;
+		NewTab["items"] = NewItems;
+		QList<QVariantMap> Defs = LoadCustomTabDefs();
+		Defs.append(NewTab);
+		SaveCustomTabDefs(Defs);
+		const QString NewId = NewTab["id"].toString();
+		RebuildCategoryTabs();
+		const int NewIdx = FindCategoryTabIndex(mCategoryTabs, NewId);
+		if (NewIdx >= 0)
+			mCategoryTabs->setCurrentIndex(NewIdx);
+	}
+	else if (IsCustom)
+	{
+		// Update existing custom tab
+		QList<QVariantMap> Defs = LoadCustomTabDefs();
+		for (auto& Tab : Defs)
+		{
+			if (Tab.value("id").toString() == CurrentId)
+			{
+				Tab["name"] = NewName;
+				Tab["icon"] = NewIcon;
+				Tab["color"] = PickedColor;
+				Tab["items"] = NewItems;
+				break;
+			}
+		}
+		SaveCustomTabDefs(Defs);
+		RebuildCategoryTabs();
+	}
+	else
+	{
+		// Update built-in tab override
+		QSettings Settings;
+		Settings.setValue(QString("TabOverrides/%1/Name").arg(CurrentId), NewName);
+		Settings.setValue(QString("TabOverrides/%1/Icon").arg(CurrentId), NewIcon);
+		Settings.setValue(QString("TabOverrides/%1/Color").arg(CurrentId), PickedColor);
+		RebuildCategoryTabs();
+	}
 }
 
 QStringList mlMainWindow::FavoriteEntries() const
@@ -7087,6 +7741,14 @@ void mlMainWindow::PopulateFileList()
 				QTreeWidgetItem* MapItem = new QTreeWidgetItem(mFileListWidget, QStringList() << MapName);
 				ConfigureItem(MapItem, ML_ITEM_MAP, MapName, MapName, FavoriteKey, MapName, StandardRowHeight);
 			}
+			else if (ActiveTab.startsWith("custom-"))
+			{
+				const QStringList TabItems = GetCustomTabItems(ActiveTab);
+				if (!TabItems.contains(FavoriteKey, Qt::CaseInsensitive))
+					continue;
+				QTreeWidgetItem* MapItem = new QTreeWidgetItem(mFileListWidget, QStringList() << MapName);
+				ConfigureItem(MapItem, ML_ITEM_MAP, MapName, MapName, FavoriteKey, MapName, StandardRowHeight);
+			}
 		}
 	}
 
@@ -7109,8 +7771,15 @@ void mlMainWindow::PopulateFileList()
 				QString FavoriteKey = QString("mod:%1/%2").arg(ModName.toLower(), QString(Files[FileIdx]).toLower());
 				Lookup.insert(FavoriteKey, QVariantMap{ { "type", ML_ITEM_MOD }, { "container", ModName }, { "entry", QString(Files[FileIdx]) }, { "display", QString(Files[FileIdx]) } });
 
-				if (ActiveTab != "mods" && ActiveTab != "all")
+				if (ActiveTab != "mods" && ActiveTab != "all" && !ActiveTab.startsWith("custom-"))
 					continue;
+
+				if (ActiveTab.startsWith("custom-"))
+				{
+					const QStringList TabItems = GetCustomTabItems(ActiveTab);
+					if (!TabItems.contains(GroupFavoriteKey, Qt::CaseInsensitive))
+						continue;
+				}
 
 				if (!ParentItem)
 				{
@@ -7523,19 +8192,24 @@ void mlMainWindow::OnFileNew()
 	FormLayout->addRow("Display name:", DisplayNameWidget);
 
 	QLineEdit* ColorEdit = new QLineEdit(&Dialog);
-	ColorEdit->hide();
+	ColorEdit->setPlaceholderText("#ff8a2a");
 	QPushButton* ColorBrowseButton = new QPushButton(&Dialog);
 	ColorBrowseButton->setCursor(Qt::PointingHandCursor);
-	ColorBrowseButton->setFixedSize(28, 28);
-	ColorBrowseButton->setToolTip("Click to pick the preview color.");
+	ColorBrowseButton->setFixedSize(26, 26);
+	ColorBrowseButton->setToolTip("Pick selection color");
+	QToolButton* ColorHelpButton = new QToolButton(&Dialog);
+	ColorHelpButton->setText("?");
+	ColorHelpButton->setToolTip("Colors only change how this map or mod appears inside the launcher list.");
+	QPushButton* ClearColorButton = new QPushButton("Clear", &Dialog);
 	QWidget* ColorRowWidget = new QWidget(&Dialog);
 	QHBoxLayout* ColorRowLayout = new QHBoxLayout(ColorRowWidget);
 	ColorRowLayout->setContentsMargins(0, 0, 0, 0);
 	ColorRowLayout->setSpacing(6);
+	ColorRowLayout->addWidget(ColorEdit, 1);
 	ColorRowLayout->addWidget(ColorBrowseButton);
-	ColorRowLayout->addWidget(new QLabel("Selection color:", &Dialog));
-	ColorRowLayout->addStretch();
-	FormLayout->addRow(ColorRowWidget);
+	ColorRowLayout->addWidget(ColorHelpButton);
+	ColorRowLayout->addWidget(ClearColorButton);
+	FormLayout->addRow("Selection color:", ColorRowWidget);
 
 	QComboBox* TemplateWidget = new QComboBox();
 	for (const QString& TemplateName : Templates)
@@ -7560,7 +8234,7 @@ void mlMainWindow::OnFileNew()
 			|| RawTemplateName.compare("MP Mod Level", Qt::CaseInsensitive) == 0;
 		if (ColorEdit->text().trimmed().isEmpty())
 			ColorEdit->setPlaceholderText(Name.isEmpty() ? "Auto color" : DefaultDisplayColorForEntryName(Name, IsMapTemplate));
-		ColorBrowseButton->setStyleSheet(QString("text-align:left; background:%1; border:1px solid #6a6a6a; border-radius:6px;").arg(
+		ColorBrowseButton->setStyleSheet(QString("background:%1; border:1px solid #6a6a6a; border-radius:6px;").arg(
 			NormalizedStoredColor(ColorEdit->text()).isEmpty()
 				? (Name.isEmpty() ? QString("#444444") : DefaultDisplayColorForEntryName(Name, IsMapTemplate))
 				: NormalizedStoredColor(ColorEdit->text())));
@@ -7573,6 +8247,11 @@ void mlMainWindow::OnFileNew()
 		const QColor Picked = QColorDialog::getColor(QColor(ColorEdit->text()), &Dialog, "Select Selection Color");
 		if (Picked.isValid())
 			ColorEdit->setText(Picked.name(QColor::HexRgb));
+	});
+	connect(ClearColorButton, &QPushButton::clicked, &Dialog, [=]() { ColorEdit->clear(); });
+	connect(ColorHelpButton, &QToolButton::clicked, &Dialog, [&, this]()
+	{
+		QMessageBox::information(&Dialog, "Selection Color", "Use a custom color to make a favorite map or mod stand out in the launcher list. This only changes the launcher UI, not the in-game name.");
 	});
 	RefreshAutoFields();
 
@@ -9766,7 +10445,7 @@ void mlMainWindow::UpdateTheme()
 			"#SettingsNavList::item { padding: 10px 12px; border-radius: 6px; }"
 			"#SettingsNavList::item:selected { background: #3b3b3b; color: #f0f0f0; }"
 				"#CategoryTabs { background: transparent; }"
-					"#CategoryTabs::tab { background: #3a3a3a; color: #f0f0f0; border: 1px solid #2a2a2a; border-bottom: 0; padding: 8px 14px; margin: 6px 3px 0 0; min-width: 70px; border-top-left-radius: 8px; border-top-right-radius: 8px; }"
+					"#CategoryTabs::tab { background: #3a3a3a; color: palette(button-text); border: 1px solid #2a2a2a; border-bottom: 0; padding: 8px 16px 8px 12px; margin: 6px 3px 0 0; min-width: 84px; border-top-left-radius: 8px; border-top-right-radius: 8px; }"
 				"#OutputTabs { background: transparent; }"
 				"#OutputTabs::tab { background: #2b2b2b; border: 1px solid #1e1e1e; border-bottom: 0; padding: 4px 8px; margin: 4px 2px 0 0; min-width: 48px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-size: 11px; }"
 						"#AssetTree { margin-top: 0; border-top-left-radius: 0; padding: 0; background: #4f4f4f; }"
@@ -9822,9 +10501,9 @@ void mlMainWindow::UpdateTheme()
 			+ QString("QToolBar QToolButton:hover { margin: 0; padding: 6px 8px; border: 1px solid %1; }").arg(AccentHoverLight)
 			+ "QToolBar QToolButton:pressed { margin: 0; padding: 6px 8px; border: 1px solid transparent; }"
 			+ QString("#LogFiltersButton:hover { background: transparent; border: 0; color: %1; }").arg(AccentHoverLight)
-				+ QString("#CategoryTabs::tab:selected { color: #111111; background: %1; border-color: %1; }").arg(AccentHoverLight)
-				+ QString("#CategoryTabs::tab:selected:hover { background: %1; border-color: %1; color: #111111; }").arg(QColor(AccentHoverLight).darker(108).name(QColor::HexRgb))
-				+ QString("#CategoryTabs::tab:hover { border-color: %1; color: %1; }").arg(AccentHoverLight)
+				+ QString("#CategoryTabs::tab:selected { color: palette(button-text); background: %1; border-color: %1; }").arg(AccentHoverLight)
+				+ QString("#CategoryTabs::tab:selected:hover { color: palette(button-text); background: %1; border-color: %1; }").arg(QColor(AccentHoverLight).darker(108).name(QColor::HexRgb))
+				+ QString("#CategoryTabs::tab:hover { color: palette(button-text); border-color: %1; }").arg(AccentHoverLight)
 				+ QString("#OutputTabs::tab:selected { color: #111111; background: %1; border-color: %1; }").arg(AccentHoverLight)
 				+ QString("#OutputTabs::tab:selected:hover { color: #111111; background: %1; border-color: %1; }").arg(QColor(AccentHoverLight).darker(108).name(QColor::HexRgb))
 				+ QString("#OutputTabs::tab:hover { border-color: %1; color: %1; }").arg(AccentHoverLight)
@@ -9856,7 +10535,7 @@ void mlMainWindow::UpdateTheme()
 						"#SettingsNavList::item:selected { background: #303030; color: #eef1f4; }"
 				"#AssetListPanel { background: transparent; }"
 				"#CategoryTabs { background: transparent; }"
-					"#CategoryTabs::tab { background: #2d2d2d; color: #d8dde2; border: 1px solid #444444; border-bottom: 0; padding: 9px 15px; margin: 8px 4px 0 0; min-width: 72px; border-top-left-radius: 10px; border-top-right-radius: 10px; }"
+					"#CategoryTabs::tab { background: #2d2d2d; color: palette(button-text); border: 1px solid #444444; border-bottom: 0; padding: 9px 17px 9px 13px; margin: 8px 4px 0 0; min-width: 84px; border-top-left-radius: 10px; border-top-right-radius: 10px; }"
 				"#OutputTabs { background: transparent; }"
 				"#OutputTabs::tab { background: #1d1d1d; color: #aeb7c0; border: 1px solid #363636; border-bottom: 0; padding: 4px 8px; margin: 4px 2px 0 0; min-width: 48px; border-top-left-radius: 7px; border-top-right-radius: 7px; font-size: 11px; }"
 						"QMenuBar, QToolBar { background: #2b2b2b; border: 0; spacing: 6px; padding: 8px; }"
@@ -9932,9 +10611,9 @@ void mlMainWindow::UpdateTheme()
 				"#FooterRefreshButton { padding: 2px 4px; }"
 				"#FooterDownloadButton { background: #1f2d23; border: 1px solid #35523d; border-radius: 8px; min-height: 18px; padding: 3px 9px; color: #eef6f0; }")
 			+ QString("#OutputConsole, #OutputConsolePlain { color: %1; }").arg(DefaultLogColor)
-				+ QString("#CategoryTabs::tab:selected { color: #ffffff; background: %1; border-color: %1; }").arg(AccentHoverDark)
-				+ QString("#CategoryTabs::tab:selected:hover { color: #ffffff; background: %1; border-color: %1; }").arg(QColor(AccentHoverDark).darker(112).name(QColor::HexRgb))
-				+ QString("#CategoryTabs::tab:hover { color: #eef1f4; border-color: %1; }").arg(AccentHoverDark)
+				+ QString("#CategoryTabs::tab:selected { color: palette(button-text); background: %1; border-color: %1; }").arg(AccentHoverDark)
+				+ QString("#CategoryTabs::tab:selected:hover { color: palette(button-text); background: %1; border-color: %1; }").arg(QColor(AccentHoverDark).darker(112).name(QColor::HexRgb))
+				+ QString("#CategoryTabs::tab:hover { color: palette(button-text); border-color: %1; }").arg(AccentHoverDark)
 				+ QString("#OutputTabs::tab:selected { color: #ffffff; background: %1; border-color: %1; }").arg(AccentHoverDark)
 				+ QString("#OutputTabs::tab:selected:hover { color: #ffffff; background: %1; border-color: %1; }").arg(QColor(AccentHoverDark).darker(112).name(QColor::HexRgb))
 				+ QString("#OutputTabs::tab:hover { color: #eef1f4; border-color: %1; }").arg(AccentHoverDark)
@@ -10449,6 +11128,19 @@ void mlMainWindow::OnHelpGuide()
 			"</ul>"
 		},
 		{
+			"Tab Customization",
+			"<h2>Tab Customization</h2>"
+			"<p>The category bar supports custom tabs for organizing maps and mods.</p>"
+			"<ul>"
+			"<li>Click the <b>+</b> tab to create a new custom tab.</li>"
+			"<li>Double-click any existing tab to open the tab editor.</li>"
+			"<li>Right-click a tab for quick actions: <b>Edit</b> and <b>Delete</b>.</li>"
+			"<li>Delete is available for custom tabs only and always asks for confirmation.</li>"
+			"<li>In the editor you can set tab name, icon image, tab name color, and included map/mod entries.</li>"
+			"</ul>"
+			"<p>Tab changes are saved automatically and restored on next launch.</p>"
+		},
+		{
 			"Display Names & Notes",
 			"<h2>Display Names &amp; Notes</h2>"
 			"<p>Each map and mod can have a custom <b>display name</b> that appears in the list instead of the internal folder name.</p>"
@@ -10554,8 +11246,12 @@ void mlMainWindow::OnHelpGuide()
 	NavList->setObjectName("SettingsNavList");
 	NavList->setFixedWidth(180);
 	NavList->setFocusPolicy(Qt::NoFocus);
+	NavList->setSpacing(2);
 	for (const GuidePage& Page : Pages)
-		NavList->addItem(Page.Title);
+	{
+		QListWidgetItem* Item = new QListWidgetItem(Page.Title, NavList);
+		Item->setSizeHint(QSize(0, 34));
+	}
 
 	QTextBrowser* ContentView = new QTextBrowser(&Dialog);
 	ContentView->setOpenExternalLinks(true);

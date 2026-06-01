@@ -276,6 +276,10 @@ protected:
 	void UpdateOutputConsoleMode();
 	void RebuildOutputFromBuffer();
 	void AppendOutputBlock(const QString& BlockText, const QSettings& Settings);
+
+	void RebuildCategoryTabs();
+	void ShowCategoryTabEditDialog(int TabIndex);
+	bool IsCustomTab(int TabIndex) const;
 	void RefreshRunDvars();
 	bool IsNewerLauncherVersion(const QString& AvailableVersion) const;
 	QString UpdateApiUrl() const;
@@ -318,6 +322,9 @@ protected:
 	QAction* mActionThemeClassic;
 
 	QTabBar* mCategoryTabs;
+	QToolButton* mCategoryTabPencilButton;
+	QPushButton* mAddCategoryTabButton;
+	int mCategoryTabHoveredIndex;
 	QLabel* mCategorySummaryLabel;
 	QSplitter* mCentralWidgetSplitter;
 	QDockWidget* mAssetDockWidget;
